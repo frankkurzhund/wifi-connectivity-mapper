@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phone WiFi Mapper</title>
+<style>
+body { font-family: system-ui; margin: 0; background: #111; color: #eee; }
+#map { width: 100%; height: 70vh; background: #222; }
+#controls { padding: 10px; text-align: center; }
+button { padding: 12px 24px; font-size: 18px; margin: 5px; }
+#status { padding: 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="controls">
+<button id="start">Start Mapping</button>
+<button id="stop" disabled>Stop</button>
+<button id="download" disabled>Download CSV</button>
+</div>
+<div id="status">Tap Start and allow location. Walk around. Keep this page open.</div>
+<div id="map"></div>
+
+<script>
+let watchId = null;
+let points = [];
+let canvas = null;
+let ctx = null;
+
+function initCanvas() {
+  const mapDiv = document.getElementById('map');
+  canvas = document.createElement('canvas');
+  canvas.width = mapDiv.clientWidth;
+  canvas.height = mapDiv.clientHeight;
+  mapDiv.appendChild(canvas);
+  ctx = canvas.getContext('2d');
+}
+
+function measureLatency() {
+  return new Promise((resolve) => {
+    const start = performance.now();
+    fetch('https://1.1.1.1', { mode: 'no-cors', cache: 'no-store' })
+      .then(() => resolve(performance.now() - start))
+      .catch(() => resolve(999));
+  });
+}
+
+function updateMap() {
+  if (!ctx || points.length === 0) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Simple relative positioning for demo
+  const lats = points.map(p => p.lat);
+  const lons = points.map(p => p.lon);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+  points.forEach(p => {
+    const x = ((p.lon - minLon) / (maxLon - minLon || 1)) * canvas.width;
+    const y = canvas.height - ((p.lat - minLat) / (maxLat - minLat || 1)) * canvas.height;
+    const color = p.latency < 50 ? '#0f0' : p.latency < 150 ? '#ff0' : '#f00';
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, 8, 0, 2 * Math.PI);
+    ctx.fill();
+  });
+}
+
+document.getElementById('start').onclick = () => {
+  initCanvas();
+  document.getElementById('start').disabled = true;
+  document.getElementById('stop').disabled = false;
+  document.getElementById('status').textContent = 'Mapping... walk around';
+  watchId = navigator.geolocation.watchPosition(async (pos) => {
+    const lat = pos.coords.latitude;
+    const lon = pos.coords.longitude;
+    const latency = await measureLatency();
+    points.push({ lat, lon, latency, time: new Date().toISOString() });
+    updateMap();
+    document.getElementById('status').textContent = `Points: ${points.length} | Last latency: ${Math.round(latency)}ms`;
+  }, (err) => {
+    document.getElementById('status').textContent = 'Location error: ' + err.message;
+  }, { enableHighAccuracy: true, maximumAge: 0 });
+};
+
+document.getElementById('stop').onclick = () => {
+  if (watchId) navigator.geolocation.clearWatch(watchId);
+  document.getElementById('stop').disabled = true;
+  document.getElementById('download').disabled = false;
+  document.getElementById('status').textContent = 'Stopped. ' + points.length + ' points collected.';
+};
+
+document.getElementById('download').onclick = () => {
+  const csv = 'timestamp,lat,lon,latency_ms\n' + points.map(p => `${p.time},${p.lat},${p.lon},${Math.round(p.latency)}`).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'wifi_map.csv';
+  a.click();
+};
+</script>
+</body>
+</html>
